@@ -7,7 +7,6 @@ common_kws = [
     'PBE0', 
     'def2-TZVP',
     'RIJCOSX',
-    'TightSCF',
     'D4'
 ]
 
