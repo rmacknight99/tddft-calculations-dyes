@@ -1,0 +1,11 @@
+numpy<2.0
+pandas
+git+https://github.com/gomesgroup/autodE.git
+tqdm
+rdkit-pypi
+networkx
+matplotlib
+pillow>=9.5.0
+cython
+scipy
+loky
