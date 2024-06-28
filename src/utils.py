@@ -2,7 +2,7 @@ import autode as ade
 import pandas as pd 
 import numpy as np 
 from rdkit import Chem
-import os, sys, json
+import os, sys, json, time
 sys.path.append('./src/')
 from kws import (
     opt_kws,
@@ -114,6 +114,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
             molecule = ade.Molecule('init.xyz', charge=charge, mult=mult, solvent_name=solvent_name)
         
         # optimize with xTB
+        os.environ['OMP_NUM_THREADS'] = '1'
         before_opt_coords = molecule.coordinates
         xtb_opt = ade.Calculation(
             name='gs_opt_low',
@@ -124,6 +125,9 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
         )
         xtb_opt.run()
         molecule.print_xyz_file(filename='xtb_opt.xyz')
+
+        # wait some time to ensure all xTB work can finish
+        time.sleep(30)
         
         # optimize the ground state geometry
         gs_opt_calc = ade.Calculation(

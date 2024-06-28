@@ -10,3 +10,4 @@ cython
 scipy
 loky
 psutil
+openbabel-wheel

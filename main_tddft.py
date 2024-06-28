@@ -6,14 +6,14 @@ def get_free_cpus():
     # overspan of 10 seconds take 5 measurements and average
     idle_cpus = 0
     for _ in range(5):
-        idle_cpus += (sum(i >= 40.0 for i in psutil.cpu_percent(percpu=True)) // 5)
+        idle_cpus += (sum(i <= 50.0 for i in psutil.cpu_percent(percpu=True)) // 5)
         time.sleep(2)
     return idle_cpus
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run TDDFT calculations')
     parser.add_argument('--n_cores', type=int, default=64, help='Number of cores to use')
-    parser.add_argument('--maxcore', type=int, default=32000, help='Maximum mem per core')
+    parser.add_argument('--maxcore', type=int, default=16000, help='Maximum mem per core')
     parser.add_argument('--use_STEOM', action='store_true', help='Use STEOM-DLPNO-CCSD instead of TD-DFT')
     parser.add_argument('--data', type=str, default='data/experimental_data.csv', help='Path to the data containing IDs and SMILES')
     parser.add_argument('--solvent_name', type=str, default='methanol', help='Name of the solvent to use')

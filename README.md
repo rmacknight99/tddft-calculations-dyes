@@ -5,6 +5,7 @@ git clone https://github.com/rmacknight99/tddft-calculations-dyes.git
 cd tddft-calculations-dyes
 conda create -n `env_name` python=3.11
 pip install -r requirements.txt
+conda install -c conda-forge xtb
 ```
 
 ### Usage
