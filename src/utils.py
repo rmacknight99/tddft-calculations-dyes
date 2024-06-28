@@ -2,16 +2,45 @@ import autode as ade
 import pandas as pd 
 import numpy as np 
 from rdkit import Chem
-import os, sys, json, time
+import os, sys, json, time, cclib
 sys.path.append('./src/')
-from kws import (
-    opt_kws,
-    tddft_kws,
-    tddft_block,
-    exc_opt_block,
-    steom_kws,
-    steom_block
-)
+
+def extract_spectrum_cclib(file_path):
+    parser = cclib.io.ccopen(file_path)
+    data = parser.parse()
+    if hasattr(data, 'etenergies') and hasattr(data, 'etoscs'):
+        energies = data.etenergies
+        fosc = data.etoscs
+    else:
+        print(hasattr(data, 'etenergies'), hasattr(data, 'etoscs'))
+        return pd.DataFrame(columns=['State', 'Energy', 'Wavelength', 'fosc'])
+    data_list = []
+    for i, (e, f) in enumerate(zip(energies, fosc)):
+        data_list.append({
+            'State': int(i + 1),
+            'Energy': e,
+            'Wavelength': 1e7 / e,
+            'fosc': f
+        })
+    df = pd.DataFrame(data_list).round(5)
+    return df
+
+def extract_HL_cclib(file_path):
+    parser = cclib.io.ccopen(file_path)
+    data = parser.parse()
+    if hasattr(data, 'moenergies') and hasattr(data, 'homos'):
+        homo_idx = data.homos[0]
+        moenergies = data.moenergies[0]
+        lumo_idx = homo_idx + 1
+        gap = (moenergies[homo_idx] - moenergies[lumo_idx]) * -1
+    else:
+        return {}
+    energy_dict = {
+        'homo': moenergies[homo_idx],
+        'lumo': moenergies[lumo_idx],
+        'gap' : gap
+    }
+    return energy_dict
 
 def load_data(file_path):
     df = pd.read_csv(file_path)
@@ -86,17 +115,20 @@ def obabel_geom_gen(SMILES):
     os.system(f'obabel -:"{SMILES}" -oxyz -O init.xyz --gen3d 2>/dev/null')
     return 'init.xyz'
     
-
 def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
+    from kws import opt_kws, tddft_kws, tddft_block, exc_opt_block, steom_kws, steom_block
     # get root
     root = os.getcwd()
     # make a directory for the calculation
     os.makedirs(str(id), exist_ok=True)
     # enter
     os.chdir(str(id))
-    if use_STEOM:
-        tddft_kws = steom_kws
-        tddft_block = steom_block
+
+    # if use_STEOM:
+    #     tddft_kws = steom_kws
+    #     tddft_block = steom_block
+
+    # exit()
     
     try:
         # make a molecule object
@@ -125,9 +157,6 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
         )
         xtb_opt.run()
         molecule.print_xyz_file(filename='xtb_opt.xyz')
-
-        # wait some time to ensure all xTB work can finish
-        time.sleep(30)
         
         # optimize the ground state geometry
         gs_opt_calc = ade.Calculation(
@@ -139,7 +168,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
         )
         # run the calculation and process
         gs_opt_calc.run()
-        gs_data = extract_HL_gap(gs_opt_calc.output.filename)
+        gs_data = extract_HL_cclib(gs_opt_calc.output.filename)
         # save as JSON
         with open('gs_energies.json', 'w') as f:
             json.dump(gs_data, f, indent=4)
@@ -154,14 +183,16 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
         )
         # run the calculation and process
         tddft_abs_calc = update_inp_and_run(tddft_abs_calc, tddft_block)
-        if use_STEOM:
-            ele_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_abs_spectrum.to_csv('ELE_ABS.csv', index=False)
-        else:
-            ele_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
-            vel_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_abs_spectrum.to_csv('ELE_ABS.csv', index=False)
-            vel_abs_spectrum.to_csv('VEL_ABS.csv', index=False)
+        abs_spectrum = extract_spectrum_cclib(tddft_abs_calc.output.filename)
+        abs_spectrum.to_csv('GS_ABS.csv')
+        # if use_STEOM:
+        #     ele_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
+        #     ele_abs_spectrum.to_csv('ELE_ABS.csv', index=False)
+        # else:
+        #     ele_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
+        #     vel_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS', END='CD SPECTRUM')
+        #     ele_abs_spectrum.to_csv('ELE_ABS.csv', index=False)
+        #     vel_abs_spectrum.to_csv('VEL_ABS.csv', index=False)
         
         # optimize the excited state geometry
         exc_opt_calc = ade.Calculation(
@@ -173,7 +204,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
         )
         # run the calculation and process
         exc_opt_calc = update_inp_and_run(exc_opt_calc, exc_opt_block)
-        exc_data = extract_HL_gap(exc_opt_calc.output.filename)
+        exc_data = extract_HL_cclib(exc_opt_calc.output.filename)
         # save as JSON
         with open('exc_energies.json', 'w') as f:
             json.dump(exc_data, f, indent=4)
@@ -187,14 +218,16 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False):
             n_cores=n_cores if not use_STEOM else 16
         )
         tddft_em_calc = update_inp_and_run(tddft_em_calc, tddft_block)
-        if use_STEOM:
-            ele_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_em_spectrum.to_csv('ELE_EM.csv', index=False)
-        else:
-            ele_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
-            vel_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_em_spectrum.to_csv('ELE_EM.csv', index=False)
-            vel_em_spectrum.to_csv('VEL_EM.csv', index=False)
+        em_spectrum = extract_spectrum_cclib(tddft_em_calc.output.filename)
+        em_spectrum.to_csv('EXC_ABS.csv')
+        # if use_STEOM:
+        #     ele_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
+        #     ele_em_spectrum.to_csv('ELE_EM.csv', index=False)
+        # else:
+        #     ele_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
+        #     vel_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS', END='CD SPECTRUM')
+        #     ele_em_spectrum.to_csv('ELE_EM.csv', index=False)
+        #     vel_em_spectrum.to_csv('VEL_EM.csv', index=False)
         
     except Exception as e:
         # write file with error
