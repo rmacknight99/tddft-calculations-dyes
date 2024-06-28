@@ -1,7 +1,5 @@
 import autode as ade
 
-import autode as ade
-
 # Common Keywords for Geometry Optimization and TD-DFT Calculations
 common_kws = [
     'PBE0', 
@@ -37,8 +35,7 @@ steom_kws = ade.wrappers.keywords.SinglePointKeywords([
     'STEOM-DLPNO-CCSD', 
     'def2-TZVP', 
     'def2-TZVP/C',
-    'RIJCOSX',
-    'CPCM(HEXANE)'
+    'RIJCOSX'
 ])
 
 steom_block = """
