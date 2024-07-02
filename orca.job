@@ -1,0 +1,17 @@
+#!/bin/bash
+#SBATCH -N 4
+#SBATCH -p batch
+#SBATCH -t 24:00:00
+#SBATCH --ntasks-per-node=128
+
+# Load modules
+module load anaconda3
+conda activate dyes
+module load openmpi/4.1.4-gcc8.5.0-nocuda
+
+# Run the main_tddft.py script
+N_CORES=32
+MAXCORE=8000
+MAXPROCESSES=512
+
+python main_tddft.py --n_cores $N_CORES --maxcore $MAXCORE --max_processes $MAXPROCESSES > job.out

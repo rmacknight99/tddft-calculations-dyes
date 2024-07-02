@@ -132,9 +132,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_td
     try:
         # make a molecule object
         ERROR_MSG = "SMILES string error, could not make molecule object"
-        molecule_ = ade.Molecule(smiles=SMILES, solvent_name=solvent_name)
-        print(molecule_.charge, SMILES)
-        
+        molecule_ = ade.Molecule(smiles=SMILES, solvent_name=solvent_name)        
         charge, mult = molecule_.charge, molecule_.mult
         # generate initial openbabel geometry
         ERROR_MSG = "openbabel structure generation error"

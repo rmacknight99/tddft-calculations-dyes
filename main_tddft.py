@@ -19,6 +19,7 @@ if __name__ == "__main__":
     parser.add_argument('--data', type=str, default='data/experimental_data.csv', help='Path to the data containing IDs and SMILES')
     parser.add_argument('--solvent_name', type=str, default='methanol', help='Name of the solvent to use')
     parser.add_argument('--debug', type=str, default='False', help='Debug mode, use True/False or an integer index')
+    parser.add_argument('--max_processes', type=int, default=None, help='Maximum number of processes to use')
     
     args = parser.parse_args()
 
@@ -54,22 +55,25 @@ if __name__ == "__main__":
         os.chdir('steom')
     
     CORES = args.n_cores
-    free_cpus = get_free_cpus()
+    if args.max_processes is  None:
+        free_cpus = get_free_cpus()
+    else:
+        free_cpus = args.max_processes
     print(f'Number of free CPUs: {free_cpus}')
     CHUNK_SIZE = (free_cpus // CORES)
     print(f'Chunk size: {CHUNK_SIZE}')
-    if CHUNK_SIZE < 2:
-        print('Warning: Chunk size is less than 2, consider increasing the number of cores')
+    if CHUNK_SIZE < 1:
+        print('Warning: Chunk size is less than 1, consider decreasing the number of cores')
         exit()
     
     tasks = data.copy()
     # update tasks to add solvent_name and n_cores args
     tasks = [(id, s, args.solvent_name, CORES, args.use_STEOM, not args.skip_tddft) for id, s in tasks]
     
+    pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
     
     # DEBUG mode means no parallel
     if args.debug == 'True':
-        pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
         for task in tasks:
             result = run(*task)
             pbar.update(1)
@@ -80,7 +84,6 @@ if __name__ == "__main__":
         exit()
     else:
         print("Running calculations in parallel...")
-        pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
     
         with concurrent.futures.ProcessPoolExecutor(max_workers=CHUNK_SIZE) as executor:
             futures = []
