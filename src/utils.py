@@ -133,6 +133,8 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_td
         # make a molecule object
         ERROR_MSG = "SMILES string error, could not make molecule object"
         molecule_ = ade.Molecule(smiles=SMILES, solvent_name=solvent_name)
+        print(molecule_.charge, SMILES)
+        
         charge, mult = molecule_.charge, molecule_.mult
         # generate initial openbabel geometry
         ERROR_MSG = "openbabel structure generation error"
@@ -171,6 +173,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_td
         )
         # run the calculation and process
         gs_opt_calc.run()
+        
         try:
             gs_data = extract_HL_cclib(gs_opt_calc.output.filename)
         except:
@@ -206,7 +209,10 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_td
             )
             # run the calculation and process
             exc_opt_calc = update_inp_and_run(exc_opt_calc, exc_opt_block)
-            exc_data = extract_HL_cclib(exc_opt_calc.output.filename)
+            try:
+                exc_data = extract_HL_cclib(exc_opt_calc.output.filename)
+            except:
+                exc_data = extract_HL_gap(exc_opt_calc.output.filename)
             # save as JSON
             with open('exc_energies.json', 'w') as f:
                 json.dump(exc_data, f, indent=4)
@@ -223,6 +229,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_td
             tddft_em_calc = update_inp_and_run(tddft_em_calc, tddft_block)
             em_spectrum = extract_spectrum_cclib(tddft_em_calc.output.filename)
             em_spectrum.to_csv('EXC_ABS.csv')
+            
     except Exception as e:
         # write file with error
         with open(f'ERROR', 'w') as f:

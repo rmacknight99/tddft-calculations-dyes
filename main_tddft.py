@@ -66,10 +66,10 @@ if __name__ == "__main__":
     # update tasks to add solvent_name and n_cores args
     tasks = [(id, s, args.solvent_name, CORES, args.use_STEOM, not args.skip_tddft) for id, s in tasks]
     
-    pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
     
     # DEBUG mode means no parallel
     if args.debug == 'True':
+        pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
         for task in tasks:
             result = run(*task)
             pbar.update(1)
@@ -80,6 +80,7 @@ if __name__ == "__main__":
         exit()
     else:
         print("Running calculations in parallel...")
+        pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
     
         with concurrent.futures.ProcessPoolExecutor(max_workers=CHUNK_SIZE) as executor:
             futures = []
