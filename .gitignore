@@ -166,3 +166,8 @@ data/
 *.out
 tddft/
 steom/
+.history/
+crest_ensemble/*
+**.svg
+**.png 
+**.ipynb 

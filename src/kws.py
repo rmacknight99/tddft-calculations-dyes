@@ -40,7 +40,7 @@ steom_kws = ade.wrappers.keywords.SinglePointKeywords([
 
 steom_block = """
 %mdci
-  nroots 20
+  nroots 5
   dosolv true
 end
 """
