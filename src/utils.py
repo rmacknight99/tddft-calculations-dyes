@@ -4,6 +4,9 @@ import numpy as np
 from rdkit import Chem
 import os, sys, json, time
 sys.path.append('./src/')
+import cclib
+from morfeus.xtb import XTB
+from morfeus.conformer import ConformerEnsemble
 
 def extract_spectrum_cclib(file_path):
     parser = cclib.io.ccopen(file_path)
