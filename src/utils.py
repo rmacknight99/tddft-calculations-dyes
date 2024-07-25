@@ -2,29 +2,16 @@ import autode as ade
 import pandas as pd 
 import numpy as np 
 from rdkit import Chem
-from rdkit.Chem import rdDetermineBonds
 import os, sys, json, time
 sys.path.append('./src/')
-from kws import (
-    opt_kws,
-    tddft_kws,
-    tddft_block,
-    exc_opt_block,
-    steom_kws,
-    steom_block
-)
-import cclib
-from morfeus.conformer import ConformerEnsemble
-from morfeus import XTB
 
-def extract_spectrum_cclib(file_path, plot=False, show_mol=True):
+def extract_spectrum_cclib(file_path):
     parser = cclib.io.ccopen(file_path)
     data = parser.parse()
     if hasattr(data, 'etenergies') and hasattr(data, 'etoscs'):
         energies = data.etenergies
         fosc = data.etoscs
     else:
-        print(hasattr(data, 'etenergies'), hasattr(data, 'etoscs'))
         return pd.DataFrame(columns=['State', 'Energy', 'Wavelength', 'fosc'])
     data_list = []
     for i, (e, f) in enumerate(zip(energies, fosc)):
@@ -35,15 +22,6 @@ def extract_spectrum_cclib(file_path, plot=False, show_mol=True):
             'fosc': f
         })
     df = pd.DataFrame(data_list).round(5)
-    
-    if plot:
-        from plotting import plot_spectrum
-        exp_df = pd.read_csv('./data/experimental_data.csv')
-        ID = file_path.split('/')[-2]
-        SMILES_string = exp_df[exp_df['ID'] == int(ID)]['Dye_SMILE'].values[0]
-        show_mol = Chem.MolFromSmiles(SMILES_string)
-        _ = plot_spectrum(df, show_mol=show_mol)
-    
     return df
 
 def extract_HL_cclib(file_path):
@@ -53,7 +31,6 @@ def extract_HL_cclib(file_path):
         homo_idx = data.homos[0]
         moenergies = data.moenergies[0]
         lumo_idx = homo_idx + 1
-        import pdb; pdb.set_trace()
         gap = (moenergies[homo_idx] - moenergies[lumo_idx]) * -1
     else:
         return {}
@@ -63,6 +40,33 @@ def extract_HL_cclib(file_path):
         'gap' : gap
     }
     return energy_dict
+
+def extract_HL_gap(fname):
+    energies = {'homo': None, 'lumo': None, 'gap': None}
+    search = 'ORBITAL ENERGIES'
+    # open the output file
+    with open(fname, 'r') as f:
+        lines = f.readlines()
+    lines = [l.strip() for l in lines]
+    
+    start_idx = lines.index(search) + 4
+    end_idx = lines.index('MULLIKEN ATOMIC CHARGES') - 6
+    
+    occ_lines = lines[start_idx:end_idx]
+    headers = lines[start_idx-1].strip().split()
+    data = []
+    for l in occ_lines:
+        vals = [float(v) for v in l.strip().split()]
+        data_dict = {h: v for h, v in zip(headers, vals)}
+        data.append(data_dict)
+    df = pd.DataFrame(data)
+    # Find where first index of df['OCC'] == 0
+    lumo_idx = df[df['OCC'] == 0].index[0]
+    homo_idx = lumo_idx - 1
+    lumo_energy, homo_energy = df['E(eV)'].tolist()[lumo_idx], df['E(eV)'].tolist()[homo_idx]
+    gap = (homo_energy - lumo_energy) * -1
+    energies['homo'], energies['lumo'], energies['gap'] = lumo_energy, homo_energy, gap
+    return energies
 
 def load_data(file_path):
     df = pd.read_csv(file_path)
@@ -106,57 +110,37 @@ def extract_spectrum(fname, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC D
 
     return pd.DataFrame(data)
 
-def extract_HL_gap(fname):
-    energies = {'homo': None, 'lumo': None, 'gap': None}
-    search = 'ORBITAL ENERGIES'
-    # open the output file
-    with open(fname, 'r') as f:
-        lines = f.readlines()
-    lines = [l.strip() for l in lines]
-    
-    start_idx = lines.index(search) + 4
-    end_idx = lines.index('MULLIKEN ATOMIC CHARGES') - 6
-    
-    occ_lines = lines[start_idx:end_idx]
-    headers = lines[start_idx-1].strip().split()
-    data = []
-    for l in occ_lines:
-        vals = [float(v) for v in l.strip().split()]
-        data_dict = {h: v for h, v in zip(headers, vals)}
-        data.append(data_dict)
-    df = pd.DataFrame(data)
-    # Find where first index of df['OCC'] == 0
-    lumo_idx = df[df['OCC'] == 0].index[0]
-    homo_idx = lumo_idx - 1
-    lumo_energy, homo_energy = df['E(eV)'].tolist()[lumo_idx], df['E(eV)'].tolist()[homo_idx]
-    gap = (homo_energy - lumo_energy) * -1
-    energies['homo'], energies['lumo'], energies['gap'] = lumo_energy, homo_energy, gap
-    return energies
-
 def obabel_geom_gen(SMILES):
     os.system(f'obabel -:"{SMILES}" -oxyz -O init.xyz --gen3d 2>/dev/null')
     return 'init.xyz'
     
-def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, skip_DFT_opt=False):
+def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_tddft=True):
+    from kws import opt_kws, tddft_kws, tddft_block, exc_opt_block, steom_kws, steom_block
     # get root
     root = os.getcwd()
     # make a directory for the calculation
     os.makedirs(str(id), exist_ok=True)
     # enter
     os.chdir(str(id))
+
     if use_STEOM:
         tddft_kws = steom_kws
         tddft_block = steom_block
     
+    ERROR_MSG = "Initialization Error"
+    
     try:
         # make a molecule object
-        molecule_ = ade.Molecule(smiles=SMILES, solvent_name=solvent_name)
+        ERROR_MSG = "SMILES string error, could not make molecule object"
+        molecule_ = ade.Molecule(smiles=SMILES, solvent_name=solvent_name)        
         charge, mult = molecule_.charge, molecule_.mult
         # generate initial openbabel geometry
+        ERROR_MSG = "openbabel structure generation error"
         if os.path.exists('init.xyz'):
             xyz_file = 'init.xyz'
         else:
             xyz_file = obabel_geom_gen(SMILES)
+        ERROR_MSG = "molecule from `init.xyz` error"
         molecule = ade.Molecule(xyz_file, charge=charge, mult=mult, solvent_name=solvent_name)
         # see if coordinates are all 0
         if np.all(np.asarray(molecule.coordinates) == 0.):
@@ -164,8 +148,8 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, skip_D
             molecule = ade.Molecule('init.xyz', charge=charge, mult=mult, solvent_name=solvent_name)
         
         # optimize with xTB
+        ERROR_MSG = "xTB geometry optimization error"
         os.environ['OMP_NUM_THREADS'] = '1'
-        before_opt_coords = molecule.coordinates
         xtb_opt = ade.Calculation(
             name='gs_opt_low',
             molecule=molecule,
@@ -175,25 +159,27 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, skip_D
         )
         xtb_opt.run()
         molecule.print_xyz_file(filename='xtb_opt.xyz')
-
-        # wait some time to ensure all xTB work can finish
-        # time.sleep(30)
         
-        if not skip_DFT_opt:
-            # optimize the ground state geometry
-            gs_opt_calc = ade.Calculation(
-                name='gs_opt', 
-                molecule=molecule, 
-                method=ade.methods.ORCA(),
-                keywords=opt_kws,
-                n_cores=n_cores
-            )
-            # run the calculation and process
-            gs_opt_calc.run()
+        # optimize the ground state geometry
+        ERROR_MSG = "Ground state DFT optimization error"
+        gs_opt_calc = ade.Calculation(
+            name='gs_opt', 
+            molecule=molecule, 
+            method=ade.methods.ORCA(),
+            keywords=opt_kws,
+            n_cores=n_cores
+        )
+        # run the calculation and process
+        gs_opt_calc.run()
+        
+        try:
+            gs_data = extract_HL_cclib(gs_opt_calc.output.filename)
+        except:
             gs_data = extract_HL_gap(gs_opt_calc.output.filename)
-            # save as JSON
-            with open('gs_energies.json', 'w') as f:
-                json.dump(gs_data, f, indent=4)
+        
+        # save as JSON
+        with open('gs_energies.json', 'w') as f:
+            json.dump(gs_data, f, indent=4)
         
         # calculate the absorption spectrum
         tddft_abs_calc = ade.Calculation(
@@ -201,7 +187,7 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, skip_D
             molecule=molecule, 
             method=ade.methods.ORCA(),
             keywords=tddft_kws,
-            n_cores=n_cores
+            n_cores=n_cores if not use_STEOM else 16
         )
         # run the calculation and process
         tddft_abs_calc = update_inp_and_run(tddft_abs_calc, tddft_block)
@@ -251,6 +237,8 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, skip_D
         # write file with error
         with open(f'ERROR', 'w') as f:
             f.write(str(e))
+            f.write('\n')
+            f.write(ERROR_MSG)
         os.chdir(root)
         return 'Failed'
 
