@@ -17,9 +17,10 @@ if __name__ == "__main__":
     parser.add_argument('--use_STEOM', action='store_true', help='Use STEOM-DLPNO-CCSD instead of TD-DFT')
     parser.add_argument('--skip_tddft', action='store_true', help='Run the TDDFT calculation')
     parser.add_argument('--data', type=str, default='data/experimental_data.csv', help='Path to the data containing IDs and SMILES')
-    parser.add_argument('--solvent_name', type=str, default='methanol', help='Name of the solvent to use')
     parser.add_argument('--debug', type=str, default='False', help='Debug mode, use True/False or an integer index')
     parser.add_argument('--max_processes', type=int, default=None, help='Maximum number of processes to use')
+    parser.add_argument('--rundir', type=str, default=None, help='Directory to run the calculations')
+    parser.add_argument('--g16', action='store_true', help='Use Gaussian16', default=False)
     
     args = parser.parse_args()
 
@@ -31,7 +32,7 @@ if __name__ == "__main__":
         if args.use_STEOM:
             data = [('TEST_STEOM', 'CC1(/C(N(C)C2=C1C=CC=C2)=C\C=C\C=C\C=C\C3=[N+](C)C(C=CC=C4)=C4C(C)3C)C')]
         else:
-            data = [('TEST', 'CO')]
+            data = data[:1]
         print(f'Debugging the SMILES string `{data[0][1]}`')
     elif args.debug == 'False':
         pass
@@ -48,8 +49,12 @@ if __name__ == "__main__":
     # make a directory for the calculations and enter it
     root = os.getcwd()
     if not args.use_STEOM:
-        os.makedirs('tddft', exist_ok=True)
-        os.chdir('tddft')
+        if args.rundir is None:
+            rundir = 'tddft'
+        else:
+            rundir = args.rundir
+        os.makedirs(rundir, exist_ok=True)
+        os.chdir(rundir)
     else:
         os.makedirs('steom', exist_ok=True)
         os.chdir('steom')
@@ -68,7 +73,7 @@ if __name__ == "__main__":
     
     tasks = data.copy()
     # update tasks to add solvent_name and n_cores args
-    tasks = [(id, s, args.solvent_name, CORES, args.use_STEOM, not args.skip_tddft) for id, s in tasks]
+    tasks = [(id, s, CORES, args.use_STEOM, not args.skip_tddft, args.g16) for id, s in tasks]
     
     pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
     

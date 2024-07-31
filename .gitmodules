@@ -1,0 +1,3 @@
+[submodule "aimnet2_api_client"]
+	path = aimnet2_api_client
+	url = https://github.com/gomesgroup/aimnet2_api_client.git

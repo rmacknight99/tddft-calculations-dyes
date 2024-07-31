@@ -7,6 +7,7 @@ sys.path.append('./src/')
 import cclib
 from morfeus.xtb import XTB
 from morfeus.conformer import ConformerEnsemble
+from kws import ORCA_KWS, GAUSSIAN_KWS
 
 def extract_spectrum_cclib(file_path):
     parser = cclib.io.ccopen(file_path)
@@ -116,39 +117,31 @@ def extract_spectrum(fname, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC D
 def obabel_geom_gen(SMILES):
     os.system(f'obabel -:"{SMILES}" -oxyz -O init.xyz --gen3d 2>/dev/null')
     return 'init.xyz'
-    
-def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_tddft=True):
-    from kws import opt_kws, tddft_kws, tddft_block, exc_opt_block, steom_kws, steom_block
-    # get root
-    root = os.getcwd()
-    # make a directory for the calculation
-    os.makedirs(str(id), exist_ok=True)
-    # enter
-    os.chdir(str(id))
 
-    if use_STEOM:
-        tddft_kws = steom_kws
-        tddft_block = steom_block
+def run_gs_opt(id, SMILES, n_cores, ERROR_MSG, g16=False):
     
-    ERROR_MSG = "Initialization Error"
+    if g16:
+        from kws import GAUSSIAN_KWS as KWS
+        DFT_METHOD = ade.methods.G16()
+    else:
+        from kws import ORCA_KWS as KWS
+        DFT_METHOD = ade.methods.ORCA()
     
     try:
-        # make a molecule object
         ERROR_MSG = "SMILES string error, could not make molecule object"
-        molecule_ = ade.Molecule(smiles=SMILES, solvent_name=solvent_name)        
+        molecule_ = ade.Molecule(smiles=SMILES, solvent_name=None)
         charge, mult = molecule_.charge, molecule_.mult
-        # generate initial openbabel geometry
         ERROR_MSG = "openbabel structure generation error"
         if os.path.exists('init.xyz'):
             xyz_file = 'init.xyz'
         else:
             xyz_file = obabel_geom_gen(SMILES)
         ERROR_MSG = "molecule from `init.xyz` error"
-        molecule = ade.Molecule(xyz_file, charge=charge, mult=mult, solvent_name=solvent_name)
+        molecule = ade.Molecule(xyz_file, charge=charge, mult=mult, solvent_name=None)
         # see if coordinates are all 0
         if np.all(np.asarray(molecule.coordinates) == 0.):
             molecule_.print_xyz_file(filename='init.xyz')
-            molecule = ade.Molecule('init.xyz', charge=charge, mult=mult, solvent_name=solvent_name)
+            molecule = ade.Molecule('init.xyz', charge=charge, mult=mult, solvent_name=None)
         
         # optimize with xTB
         ERROR_MSG = "xTB geometry optimization error"
@@ -168,73 +161,155 @@ def run(id, SMILES, solvent_name='methanol', n_cores=32, use_STEOM=False, run_td
         gs_opt_calc = ade.Calculation(
             name='gs_opt', 
             molecule=molecule, 
-            method=ade.methods.ORCA(),
-            keywords=opt_kws,
+            method=DFT_METHOD,
+            keywords=KWS['opt'],
             n_cores=n_cores
         )
         # run the calculation and process
         gs_opt_calc.run()
         
-        try:
-            gs_data = extract_HL_cclib(gs_opt_calc.output.filename)
-        except:
-            gs_data = extract_HL_gap(gs_opt_calc.output.filename)
+        return True, gs_opt_calc
+    except:
+        # write file with error
+        with open(f'ERROR', 'w') as f:
+            f.write(ERROR_MSG)
+            
+        return False, None
+
+def run_exc_opt(molecule, n_cores, ERROR_MSG, g16=False):
+    if g16:
+        from kws import GAUSSIAN_KWS as KWS
+        DFT_METHOD = ade.methods.G16()
+    else:
+        from kws import ORCA_KWS as KWS
+        DFT_METHOD = ade.methods.ORCA()
         
-        # save as JSON
-        with open('gs_energies.json', 'w') as f:
-            json.dump(gs_data, f, indent=4)
-        
-        # calculate the absorption spectrum
-        tddft_abs_calc = ade.Calculation(
-            name='abs', 
-            molecule=molecule, 
-            method=ade.methods.ORCA(),
-            keywords=tddft_kws,
-            n_cores=n_cores if not use_STEOM else 16
-        )
-        # run the calculation and process
-        tddft_abs_calc = update_inp_and_run(tddft_abs_calc, tddft_block)
-        if use_STEOM:
-            ele_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_abs_spectrum.to_csv('ELE_ABS.csv', index=False)
-        else:
-            ele_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
-            vel_abs_spectrum = extract_spectrum(tddft_abs_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_abs_spectrum.to_csv('ELE_ABS.csv', index=False)
-            vel_abs_spectrum.to_csv('VEL_ABS.csv', index=False)
-        
+    try:
         # optimize the excited state geometry
         exc_opt_calc = ade.Calculation(
             name='exc_opt', 
             molecule=molecule, 
-            method=ade.methods.ORCA(),
-            keywords=opt_kws,
+            method=DFT_METHOD,
+            keywords=KWS['exc_opt'],
+            n_cores=n_cores
+        )
+        # Look for block
+        if 'blocks' in KWS:
+            exc_opt_block = KWS['blocks']['exc_opt']
+        else:
+            exc_opt_block = ''
+        # run the calculation and process
+        exc_opt_calc = update_inp_and_run(exc_opt_calc, exc_opt_block)
+
+        return True, exc_opt_calc
+    except:
+        # write file with error
+        with open(f'ERROR', 'w') as f:
+            f.write(ERROR_MSG)
+            
+        return False, None
+    
+def run_tddft(molecule, n_cores, ERROR_MSG, use_STEOM=False, g16=False):
+    if g16:
+        from kws import GAUSSIAN_KWS as KWS
+        DFT_METHOD = ade.methods.G16()
+    else:
+        from kws import ORCA_KWS as KWS
+        DFT_METHOD = ade.methods.ORCA()
+
+    try:
+        # calculate the absorption spectrum
+        tddft_abs_calc = ade.Calculation(
+            name='abs', 
+            molecule=molecule, 
+            method=DFT_METHOD,
+            keywords=KWS['tddft'] if not use_STEOM else KWS['tddft_ccsd'],
             n_cores=n_cores
         )
         # run the calculation and process
-        exc_opt_calc = update_inp_and_run(exc_opt_calc, exc_opt_block)
-        exc_data = extract_HL_gap(exc_opt_calc.output.filename)
-        # save as JSON
-        with open('exc_energies.json', 'w') as f:
-            json.dump(exc_data, f, indent=4)
-        
-        # calculate the emission spectrum
-        tddft_em_calc = ade.Calculation(
-            name='em', 
-            molecule=molecule, 
-            method=ade.methods.ORCA(),
-            keywords=tddft_kws,
-            n_cores=n_cores if not use_STEOM else 16
-        )
-        tddft_em_calc = update_inp_and_run(tddft_em_calc, tddft_block)
-        if use_STEOM:
-            ele_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_em_spectrum.to_csv('ELE_EM.csv', index=False)
+        if 'blocks' in KWS:
+            tddft_block = KWS['blocks']['tddft']
         else:
-            ele_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
-            vel_em_spectrum = extract_spectrum(tddft_em_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS', END='CD SPECTRUM')
-            ele_em_spectrum.to_csv('ELE_EM.csv', index=False)
-            vel_em_spectrum.to_csv('VEL_EM.csv', index=False)
+            tddft_block = ''
+        tddft_abs_calc = update_inp_and_run(tddft_abs_calc, tddft_block)
+        
+        return True, tddft_abs_calc
+    except:
+        # write file with error
+        with open(f'ERROR', 'w') as f:
+            f.write(ERROR_MSG)
+            
+        return False, None
+
+def run(id, SMILES, n_cores=32, use_STEOM=False, run_tddft=True, g16=False):
+        
+    # get root
+    root = os.getcwd()
+    # make a directory for the calculation
+    os.makedirs(str(id), exist_ok=True)
+    # enter
+    os.chdir(str(id))
+
+    ERROR_MSG = "Initialization Error"
+
+    try:
+        # GROUND STATE OPTIMIZATION
+        print(f'Running Ground State Optimization for {SMILES}')
+        gs_status, gs_opt_calc = run_gs_opt(id, SMILES, n_cores, ERROR_MSG, g16=g16)
+        if gs_status: # If the calculation was scuccessful
+            try:
+                gs_data = extract_HL_cclib(gs_opt_calc.output.filename)
+            except:
+                gs_data = extract_HL_gap(gs_opt_calc.output.filename)
+        
+            # save as JSON
+            with open('gs_energies.json', 'w') as f:
+                json.dump(gs_data, f, indent=4)
+                
+            gs_mol = gs_opt_calc.molecule
+        else:
+            raise Exception('Ground State Optimization Failed')
+        
+        # EXCITED STATE OPTIMIZATION
+        ERROR_MSG = "Excited State Optimization Error"
+        print(f'Running Excited State Optimization for {SMILES}')
+        exc_status, exc_opt_calc = run_exc_opt(gs_mol, n_cores, ERROR_MSG, g16=g16)
+        if exc_status:
+            try:
+                exc_data = extract_HL_cclib(exc_opt_calc.output.filename)
+            except:
+                exc_data = extract_HL_gap(exc_opt_calc.output.filename)
+            # save as JSON
+            with open('exc_energies.json', 'w') as f:
+                json.dump(exc_data, f, indent=4)
+                
+            exc_mol = exc_opt_calc.molecule
+        else:
+            raise Exception('Excited State Optimization Failed')
+        
+        if not run_tddft:
+            os.chdir(root)
+            return 'Success'
+        
+        # GROUND STATE TD-DFT
+        ERROR_MSG = "Ground State TD-DFT Error"
+        gs_tddft_status, gs_tddft_calc = run_tddft(gs_mol, n_cores, ERROR_MSG, use_STEOM=use_STEOM, g16=g16)
+        if gs_tddft_status:
+            if use_STEOM:
+                ele_abs_spectrum = extract_spectrum(gs_tddft_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
+            else:
+                ele_abs_spectrum = extract_spectrum(gs_tddft_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
+            ele_abs_spectrum.to_csv('ABS.csv', index=False)
+        
+        # EXCITED STATE TD-DFT
+        ERROR_MSG = "Excited State TD-DFT Error"
+        exc_tddft_status, exc_tddft_calc = run_tddft(exc_mol, n_cores, ERROR_MSG, use_STEOM=use_STEOM, g16=g16)
+        if exc_tddft_status:
+            if use_STEOM:
+                ele_em_spectrum = extract_spectrum(exc_tddft_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='CD SPECTRUM')
+            else:
+                ele_em_spectrum = extract_spectrum(exc_tddft_calc.output.filename, START='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS', END='ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS')
+            ele_em_spectrum.to_csv('EM.csv', index=False)
         
     except Exception as e:
         # write file with error
@@ -275,8 +350,10 @@ def run_low(id, SMILES, solvent_name='methanol', n_cores=64):
         if not os.path.exists('crest'):
             _, full_ce = crest_conformer_search(
                 os.getcwd() + '/init.xyz',
-                solvent=True, 
-                take_best=False
+                solvent=False, 
+                take_best=False,
+                cores=n_cores,
+                quick='--quick'
             )
         else:
             full_ce = ConformerEnsemble.from_crest('crest')
@@ -285,7 +362,7 @@ def run_low(id, SMILES, solvent_name='methanol', n_cores=64):
         
         ELEMENTS = full_ce.elements
         for idx, conformer in enumerate(full_ce):
-            print(f'  Getting HL Gap for Conformer {idx+1}')
+            # print(f'  Getting HL Gap for Conformer {idx+1}')
             COORDS = conformer.coordinates
             xtb = XTB(ELEMENTS, COORDS)
             # a.u. to eV conversion is 27.21
@@ -318,7 +395,7 @@ def run_low(id, SMILES, solvent_name='methanol', n_cores=64):
     os.chdir(root)
     return 'Success'
 
-def crest_conformer_search(full_path, method=ade.methods.get_lmethod(), solvent=False, cbonds='cbonds', cores=16, take_best=False, opt_confs_with_xtb=False):
+def crest_conformer_search(full_path, method=ade.methods.get_lmethod(), solvent=False, cbonds='cbonds', cores=16, take_best=False, opt_confs_with_xtb=False, quick='--quick'):
     """
     Run crest on a molecule to find the lowest energy conformer
     Args:
@@ -343,18 +420,16 @@ def crest_conformer_search(full_path, method=ade.methods.get_lmethod(), solvent=
         os.mkdir(crest_dir)
         os.chdir(crest_dir)
         if solvent:
-            crest_cmd = f'crest ../{xyz_file} -T {cores} -niceprint -gfn2//gfnff -noreftopo -{cbonds}  -v4 -alpb {solvent} -quick > crest_alpb.out'
+            crest_cmd = f'crest ../{xyz_file} -T {cores} -niceprint -gfn2//gfnff -noreftopo -{cbonds}  -v3 -alpb {solvent} {quick if quick is not None else ""} > crest_alpb.out'
         else:
-            crest_cmd = f'crest ../{xyz_file} -T {cores} -niceprint -gfn2//gfnff -noreftopo -{cbonds} -v4 -quick > crest.out'
+            crest_cmd = f'crest ../{xyz_file} -T {cores} -niceprint -gfn2//gfnff -noreftopo -{cbonds} -v3 {quick if quick is not None else ""} > crest.out'
         # run crest command 
-        print(f'  Running command: {crest_cmd}')
+        # print(f'  Running command: {crest_cmd}')
         os.system(crest_cmd)
         os.system('cd ..')
     except:
         pass
     
-    full_ce = ConformerEnsemble.from_crest(crest_dir)
-
     if take_best:
         os.chdir(crest_dir)
         crest_best_path = os.path.join(os.getcwd(), 'crest_best.xyz')
@@ -371,9 +446,18 @@ def crest_conformer_search(full_path, method=ade.methods.get_lmethod(), solvent=
     else:
         # we have a crest directory with our conformers, time to prune
         ce = ConformerEnsemble.from_crest(crest_dir)
+        xtb_opt_paths = []
+        energies = []
+        xtb_opt_dir = os.path.join(os.getcwd(), 'xtb_opt')
+        
+        # All conformers more than threshold kcal/mol above the lowest energy conformer are pruned
+        ce.prune_energy(threshold=3.0)
+        
+        # A higher value results in less strict pruning (less different conformers get pruned)
+        # A lower value results in more strict pruning (highly similar conformers get pruned)
+        ce.prune_rmsd(method="spyrmsd", thres=1.0)
+        
         if opt_confs_with_xtb:
-            ce.prune_energy(threshold=1.0)
-            ce.prune_rmsd(method="spyrmsd", thres=1.5)
             # write the conformer XYZ files
             n_conformers = len(ce.conformers)
             conformer_files = [f"intermediate_conformer_{i+1}.xyz" for i in range(n_conformers)]
@@ -385,9 +469,6 @@ def crest_conformer_search(full_path, method=ade.methods.get_lmethod(), solvent=
                 solvent = None
             else:
                 solvent = "methanol"
-            xtb_opt_dir = os.path.join(os.getcwd(), 'xtb_opt')
-            xtb_opt_paths = []
-            energies = []
             for cf in conformer_files:
                 m = ade.Molecule(cf, charge=0, mult=1, solvent_name=solvent)
                 os.system(f'mkdir -p {xtb_opt_dir}')
@@ -407,8 +488,7 @@ def crest_conformer_search(full_path, method=ade.methods.get_lmethod(), solvent=
                 m.print_xyz_file()
                 energies.append(m.energy.to("kcal"))
     os.chdir(HOME)
-    return xtb_opt_paths, full_ce
- 
+    return xtb_opt_paths, ce
 
 if __name__ == '__main__':
     # Test cclib parsing

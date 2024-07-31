@@ -1,46 +1,40 @@
 import autode as ade
 
-# Common Keywords for Geometry Optimization and TD-DFT Calculations
-common_kws = [
-    'PBE0', 
-    'def2-TZVP',
-    'RIJCOSX',
-    'D4'
-]
+server = "'http://gpg-boltzmann.cheme.cmu.edu:5002/'"
+G16_external = f'External="aimnetg16 --server {server}"'
 
-# Ground-State Geometry Optimization
-opt_kws = ade.wrappers.keywords.OptKeywords(['Opt'] + common_kws)
+ORCA_KWS = {}
 
-# Common TD-DFT Keywords for Both Absorption and Emission Spectra
-tddft_kws = ade.wrappers.keywords.SinglePointKeywords(common_kws)
+GAUSSIAN_KWS = {}
 
-# TD-DFT Block
-tddft_block = """
+ORCA_KWS['opt'] = ade.wrappers.keywords.OptKeywords(['Opt', 'PBE0', 'def2-TZVP', 'RIJCOSX', 'D4'])
+ORCA_KWS['exc_opt'] = ade.wrappers.keywords.OptKeywords(['Opt', 'PBE0', 'def2-TZVP', 'RIJCOSX', 'D4'])
+
+GAUSSIAN_KWS['opt'] = ade.wrappers.keywords.OptKeywords(['Opt', G16_external])
+GAUSSIAN_KWS['exc_opt'] = ade.wrappers.keywords.OptKeywords(['Opt', G16_external, 'TD(NStates=1, root=1)'])
+
+ORCA_KWS['tddft'] = ade.wrappers.keywords.SinglePointKeywords(['PBE0', 'def2-TZVP', 'RIJCOSX', 'D4'])
+ORCA_KWS['tddft_ccsd'] = ade.wrappers.keywords.SinglePointKeywords(['STEOM-DLPNO-CCSD', 'def2-TZVP', 'def2-TZVP/C', 'RIJCOSX'])
+
+GAUSSIAN_KWS['tddft'] = ade.wrappers.keywords.SinglePointKeywords(['PBE0', 'def2-TZVP', 'd3bj', 'TD(NStates=10)'])
+
+ORCA_KWS['blocks'] = {
+  'tddft': """
 %tddft
   nroots 20
   maxdim 5
 end
-"""
-
-# Excited-State Geometry Optimization
-exc_opt_block = """
+""",
+  'exc_opt': """
 %tddft
   nroots 1
   IRoot 1
 end
-"""
-
-# STEOM-DLPNO-CCSD for Excited States Calculation
-steom_kws = ade.wrappers.keywords.SinglePointKeywords([
-    'STEOM-DLPNO-CCSD', 
-    'def2-TZVP', 
-    'def2-TZVP/C',
-    'RIJCOSX'
-])
-
-steom_block = """
+""",
+  'steom': """
 %mdci
   nroots 5
-  dosolv true
+  dosolv false
 end
 """
+}

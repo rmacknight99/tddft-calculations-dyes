@@ -1,4 +1,4 @@
-from src.utils import run, load_data, run_low
+from src.utils import load_data, run_low
 import os, concurrent, tqdm, argparse, psutil, time
 import autode as ade 
 
@@ -26,12 +26,7 @@ if __name__ == "__main__":
     data = load_data(args.data)
     CORES = args.n_cores
     free_cpus = get_free_cpus()
-    CHUNK_SIZE = (free_cpus // CORES)
-    if args.debug:
-        data = [data[0]]
-        CHUNK_SIZE = 1
-    print(f'Number of free CPUs: {free_cpus}')
-    print(f'Chunk size: {CHUNK_SIZE}')
+    CHUNK_SIZE = 1
         
     # make a directory for the calculations and enter it
     root = os.getcwd()
@@ -41,6 +36,10 @@ if __name__ == "__main__":
     tasks = data.copy()
     # update tasks to add solvent_name and n_cores args
     tasks = [(id, s, args.solvent_name, CORES) for id, s in tasks]
+
+    finished_tasks = [i for i in os.listdir('./') if os.path.exists(f'./{i}/gs_energies.json')]
+    tasks = [task for task in tasks if f'{task[0]}' not in finished_tasks]
+    print(f'Number of tasks to run: {len(tasks)}')
     
     pbar = tqdm.tqdm(total=len(tasks), desc='Running Calculations')
     

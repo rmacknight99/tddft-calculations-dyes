@@ -78,7 +78,9 @@ def plot_spectrum(spectrum_df, filename='orca_tddft', figsize=(12, 8), x_axis='w
     plt.show()
     
     
-    return figimport pandas as pd
+    return fig
+
+import pandas as pd
 import numpy as np
 import os, json
 import matplotlib.pyplot as plt
@@ -105,13 +107,24 @@ def load_experimental_data(fname):
 def load_computational_data(IDs, root_path='./tddft/'):
     data = []
     for id in IDs:
-        if os.path.exists(root_path + f'{id}/EXC_ABS.csv'):
-            # We have the data
+        if os.path.exists(root_path + f'{id}/GS_ABS.csv'):
             abs_df = pd.read_csv(root_path + f'{id}/GS_ABS.csv', index_col=0)
+        else:
+            abs_df = None
+        if os.path.exists(root_path + f'{id}/EXC_ABS.csv'):
             exc_df = pd.read_csv(root_path + f'{id}/EXC_ABS.csv', index_col=0)
+        else:
+            exc_df = None
+        if os.path.exists(root_path + f'{id}/gs_energies.json'):
             gs_HL = json.load(open(root_path + f'{id}/gs_energies.json'))
+        else:
+            gs_HL = None
+        if os.path.exists(root_path + f'{id}/exc_energies.json'):
             exc_HL = json.load(open(root_path + f'{id}/exc_energies.json'))
-            data.append({'ID': id, 'abs': abs_df, 'em': exc_df, 'gs_HL': gs_HL, 'exc_HL': exc_HL})
+        else:
+            exc_HL = None
+
+        data.append({'ID': id, 'abs': abs_df, 'em': exc_df, 'gs_HL': gs_HL, 'exc_HL': exc_HL})
     return data
 
 def get_data(exp_data, comp_data, IDs):
@@ -128,8 +141,8 @@ def get_data(exp_data, comp_data, IDs):
         E = exp_data[IDs == comp['ID']][0][2]
         
         # get computational HL-Gap
-        gs_HL = comp['gs_HL']['gap']
-        exc_HL = comp['exc_HL']['gap']
+        gs_HL = comp['gs_HL']['gap'] if comp['gs_HL'] else None
+        exc_HL = comp['exc_HL']['gap'] if comp['exc_HL'] else None
         
         max_abs_data.append(max_abs_lamda)
         max_em_data.append(max_em_lambda)
@@ -138,28 +151,59 @@ def get_data(exp_data, comp_data, IDs):
         gs_HL_data.append(gs_HL)
         exc_HL_data.append(exc_HL)
         
-    # Standard scale the experimental data
-    max_abs_data = StandardScaler().fit_transform(np.array(max_abs_data).reshape(-1, 1)).flatten()
-    max_em_data = StandardScaler().fit_transform(np.array(max_em_data).reshape(-1, 1)).flatten()
-    gs_HL_data = MinMaxScaler().fit_transform(np.array(gs_HL_data).reshape(-1, 1)).flatten()
-    exc_HL_data = MinMaxScaler().fit_transform(np.array(exc_HL_data).reshape(-1, 1)).flatten()
-        
-    max_abs_dict = {'name': 'MAX_ABS_LAMBDA', 'data': max_abs_data}
-    max_em_dict = {'name': 'MAX_EM_LAMBDA', 'data': max_em_data}
-    # E_dict = {'name': 'E', 'data': E_data}
+    # Remove None entries from the data
+    def trim(x, y):
+        # Find None in x
+        x_mask = np.array([i is not None for i in x])
+        y_mask = np.array([not np.isnan(i) for i in y])
+        mask = x_mask & y_mask
+        x = np.array(x)[mask]
+        y = np.array(y)[mask]
+        return x, y
     
-    gs_HL_dict = {'name': 'GS_HL_GAP_eV', 'data': gs_HL_data}
-    exc_HL_dict = {'name': 'EXC_HL_GAP_eV', 'data': exc_HL_data}
+    scaler_dict = {
+        'max_abs': StandardScaler(),
+        'max_em': StandardScaler(),
+        'gs_HL': MinMaxScaler(),
+        'exc_HL': MinMaxScaler()
+    }
     
-    # All combinations of correlations to plot
-    combinations = [
-        (max_abs_dict, gs_HL_dict, 'green'),
-        (max_abs_dict, exc_HL_dict, 'gray'),
-        (max_em_dict, gs_HL_dict, 'blue'),
-        (max_em_dict, exc_HL_dict, 'red'),
-        # (E_dict, gs_HL_dict, 'orange'),
-        # (E_dict, exc_HL_dict, 'purple')
+    try:
+        gs_HL_data_unscaled = [i for i in gs_HL_data if i is not None]
+        scaler_dict['gs_HL'] = scaler_dict['gs_HL'].fit(np.array(gs_HL_data_unscaled).reshape(-1, 1))
+    except:
+        scaler_dict['gs_HL'] = None
+    try:
+        exc_HL_data_unscaled = [i for i in exc_HL_data if i is not None]
+        scaler_dict['exc_HL'] = scaler_dict['exc_HL'].fit(np.array(exc_HL_data_unscaled).reshape(-1, 1))
+    except:
+        scaler_dict['exc_HL'] = None
+    try:
+        max_abs_data_unscaled = [i for i in max_abs_data if not np.isnan(i)]
+        scaler_dict['max_abs'] = scaler_dict['max_abs'].fit(np.array(max_abs_data_unscaled).reshape(-1, 1))
+    except:
+        scaler_dict['max_abs'] = None
+    try:
+        max_em_data_unscaled = [i for i in max_em_data if not np.isnan(i)]
+        scaler_dict['max_em'] = scaler_dict['max_em'].fit(np.array(max_em_data_unscaled).reshape(-1, 1))
+    except:
+        scaler_dict['max_em'] = None
+    
+    data_pairs = [trim(x, y) for x, y in ((gs_HL_data, max_abs_data), (exc_HL_data, max_abs_data), (gs_HL_data, max_em_data), (exc_HL_data, max_em_data))]
+    data_keys = [('gs_HL', 'max_abs'), ('exc_HL', 'max_abs'), ('gs_HL', 'max_em'), ('exc_HL', 'max_em')]
+    combinations = []
+    colors = [
+        'blue', 'green', 'red', 'gray', 'purple', 'orange', 'cyan', 'magenta', 'black', 'brown'
     ]
+    for (x, y), (x_key, y_key) in zip(data_pairs, data_keys):
+        if len(x) == 0 or len(y) == 0:
+            continue
+        x = scaler_dict[x_key].transform(np.array(x).reshape(-1, 1)).flatten()
+        y = scaler_dict[y_key].transform(np.array(y).reshape(-1, 1)).flatten()
+        x_dict = {'name': x_key.upper(), 'data': x}
+        y_dict = {'name': y_key.upper(), 'data': y}
+        combinations.append((x_dict, y_dict, colors.pop(0)))
+        
     return combinations
 
 def find_outliers(y_pred, y_data, thresh=2.5):
@@ -258,7 +302,7 @@ def plot_combinations(combinations, axs):
 if __name__ == "__main__":
     exp_path = './data/experimental_data.csv'
     IDs, exp_data, obj_names = load_experimental_data(exp_path)
-    comp_data = load_computational_data(IDs)
+    comp_data = load_computational_data(IDs, root_path='./crest_ensemble/')
     combinations = get_data(exp_data, comp_data, IDs)
 
     # Create a figure with subplots
@@ -267,5 +311,5 @@ if __name__ == "__main__":
 
     # Adjust layout and save the figure
     plt.tight_layout()
-    plt.savefig('./data/all_correlations.png')
-    print("Plots saved to './data/all_correlations.png'")
+    plt.savefig('./data/all_correlations_crest.png')
+    print("Plots saved to './data/all_correlations_crest.png'")
